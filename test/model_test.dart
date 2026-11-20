@@ -30,6 +30,9 @@ void main() {
     expect(deal.rating, isNull);
     expect(deal.discountPercent, 67);
     expect(deal.isFlashSale, isFalse);
-    expect(deal.pickupWindow.start.isUtc, isTrue);
+    expect(deal.pickupWindow.start.isUtc, isFalse);
+    expect(deal.pickupWindow.end.isUtc, isFalse);
+    expect(deal.pickupWindow.start.toUtc(), DateTime.utc(2026, 1, 1, 10, 30));
+    expect(deal.pickupWindow.end.toUtc(), DateTime.utc(2026, 1, 1, 14));
   });
 }

@@ -62,18 +62,71 @@ Request order can be controlled with repository test doubles and `Completer` obj
 
 Use `_isRefresh` to prevent overlapping refreshes and block new pagination requests while refresh is running. After a successful refresh, reset `_page` to 1 and `_nextPage` to 2. Compare the pagination state before accepting a response or handling an error so that stale requests cannot update the refreshed feed. Roll back the page counter only when the current pagination request fails, allowing the same page to be retried. Clear loading flags in `finally`, report current failures through the refresh controller, and reset the exhausted footer after a successful refresh.
 
-### RES-105 (about 5 minutes; partial: scroll-triggered rebuilds)
+### RES-105 (2 hours)
 
 #### Cause
 
-Every scroll-offset change updated an observable read by the `Obx` wrapping the whole home screen. Scrolling repeatedly rebuilt the screen and recreated widgets for all loaded deals, even when the app-bar shadow and button visibility did not need to change.
+Three issues contributed to scrolling work and image memory pressure:
+
+1. Every scroll-offset change updated an observable read by the `Obx` wrapping the whole home screen. This repeatedly rebuilt the Scaffold and feed, although the offset was only needed for the app-bar shadow and scroll-to-top button.
+2. The feed used `ListView(children: ...)` and mapped every loaded deal into a `DealCard`. Each feed rebuild copied or filtered the deal list and recreated all those card widgets. Loading another page increased this work. Flutter still mounted list children lazily; creating all the widget configurations did not mean every offscreen card subtree or image was loaded immediately.
+3. The API supplied 1600 by 1200 images, but `TheNetworkImage` only specified display dimensions. Without a decode-size hint, small cards could retain full-resolution decoded images. One 1600 by 1200 RGBA image requires approximately 7.3 MiB of pixel data, excluding other overhead.
 
 #### Solution
 
-Keep the feed's data observer inside the Scaffold body. Replace the observable pixel offset with `showScrollToTop`, updating it only when scrolling crosses the 800-logical-pixel threshold. A separate `Obx` around the button shows it only when the offset is greater than 800 and hides it at or below 800, including during the scroll-to-top animation. Scrolling within either range causes no reactive update. Flutter's built-in `scrolledUnderElevation` handles the app-bar shadow without a feed rebuild; this replaces the previous custom 4-pixel shadow threshold.
+Keep the feed's data observer inside the Scaffold body and give the scroll-to-top button its own `Obx`. Replace the observable pixel offset with `showScrollToTop`. The scroll listener updates that boolean only when the offset crosses the 800-logical-pixel threshold. The button appears above 800 and hides at or below 800, including during its scroll-to-top animation. Scrolling within either range causes no reactive update. Flutter's built-in `scrolledUnderElevation` handles the app-bar shadow without rebuilding the feed; this replaces the previous custom 4-pixel shadow threshold.
 
-Removing the listener entirely and showing the button all the time was considered, but rejected because the button should retain its original visibility threshold. The existing controller still disposes its scroll controller on close.
+Replace the feed's explicit children list with a `CustomScrollView`. Use `SliverToBoxAdapter` for the flash rail, header/filter, and bottom spacing, and a `SliverList` with `SliverChildBuilderDelegate` for the deal cards. Cards are created near the viewport as needed and keyed by deal ID. Read `visibleDeals` and copy `flashDeals` inside the body observer before constructing the lazy delegate, so reactive dependencies are registered there and the delegate uses a stable data snapshot. Keep the existing refresh callbacks, pagination callbacks, and scroll controller connected to the same scroll view.
 
-This change only addresses scroll-triggered rebuilds. Lazy card construction, image decode sizing, and before/after DevTools measurements remain outstanding; the full RES-105 ticket is not complete.
+Wrap the shared network image in `LayoutBuilder`. Determine its finite display width from the explicit width or available constraints, multiply by `MediaQuery.devicePixelRatioOf(context)`, and pass the rounded-up physical width as `memCacheWidth` to `CachedNetworkImage`. Setting only the decode width preserves the source aspect ratio. Explicit finite widths are constrained to the available layout width; an unbounded or non-positive width falls back to the original decode behavior.
 
-Validation: Dart static analysis of the home screen and controller passed with no issues, and `git diff --check` passed. Device UI behavior and DevTools measurements have not been verified.
+#### Alternatives considered
+
+- Removing the scroll listener and always showing the button avoids custom scroll tracking, but changes its intended visibility. A threshold boolean preserves the 800-pixel behavior without publishing every pixel change.
+
+#### limitations
+
+- The sliver list uses the filtered snapshot's length, including when the filter produces no deals. Flash-rail presence and feed data changes are observed separately from button visibility.
+- Decode sizing currently considers width only. Tall or square `BoxFit.cover` destinations may need a larger decode to maintain sharpness after cropping. A general height-aware solution needs the source aspect ratio; that improvement is not implemented.
+- Different display widths can create separate decoded cache entries for the same URL. Actual cache residency and image sharpness across layouts still need measurement.
+- Smaller decoding does not guarantee faster network loading.
+
+#### Validation and performance evidence
+
+The before/after screenshots in `img_solution/` capture the Flutter DevTools Performance screen with **Count widget builds** enabled. The following values are transcribed from those captures:
+
+| DevTools metric | Before | After |
+|---|---|---|
+| `DealCard` builds, latest displayed frame | 4 | 0 |
+| `DealCard` builds, overall recorded count | 3,610 | 642 |
+| `CachedNetworkImage` builds, latest displayed frame | 8 | 0 |
+| `CachedNetworkImage` builds, overall recorded count | 4,098 | 662 |
+| Displayed average FPS | 35 | 35 |
+
+Before:
+
+![Before: DevTools frame chart and widget rebuild counts](img_solution/before.png)
+
+After:
+
+![After: DevTools frame chart and widget rebuild counts](img_solution/after.png)
+
+### RES-106
+
+#### Cause
+
+The API returns valid ISO-8601 UTC instants. `DateTime.parse()` preserves UTC, but `PickupWindowModel.label` formatted those UTC hours directly. For example, a November 20 pickup window of 06:00–09:30 in Bangkok is returned as November 19 at 23:00 UTC through November 20 at 02:30 UTC. Formatting those values without converting them caused the card to show 23:00–02:30.
+
+`isToday` also compared only `start.day` with `DateTime.now().day`. This mixed the pickup's UTC calendar date with the device's local calendar date, excluding early-morning pickups that started on the previous UTC day. Ignoring month and year could also classify an unrelated date as today. Finally, time passing alone did not rebuild the home feed, so the filter could remain stale after midnight.
+
+#### Solution
+
+Convert both pickup timestamps with `.toLocal()` in `PickupWindowModel.fromJson()`. This preserves their original instants while making labels and calendar-date comparisons use the machine's timezone. On a device using Bangkok time, the bakery now displays 06:00–09:30. Compare year, month, and day against one captured `DateTime.now()` in `isToday`.
+
+Schedule a one-shot timer for the next local midnight in `HomeController`. When the date changes, reuse the existing page-loading flow to refresh the home feed and flash deals. The existing filter is reapplied, and its selected state is preserved. Reschedule for each following midnight. Constructing the next calendar midnight avoids assuming every local day lasts exactly 24 hours.
+
+Observe app lifecycle changes and refresh on resume if the local date changed while the app was suspended. Cancel the timer and remove the observer when the controller closes. Ignore asynchronous results after the controller has closed.
+
+#### Alternatives considered
+
+- A separate reactive date used by the filter could update the list without fetching data. Reusing the existing page refresh was chosen to keep filtering in `isToday` and reload the home page through its existing flow.

@@ -23,22 +23,37 @@ class TheNetworkImage extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: borderRadius ?? BorderRadius.zero,
-      child: CachedNetworkImage(
-        imageUrl: url,
-        width: width,
-        height: height,
-        fit: fit,
-        placeholder: (context, _) => Shimmer.fromColors(
-          baseColor: Colors.grey.shade300,
-          highlightColor: Colors.grey.shade100,
-          child: Container(width: width, height: height, color: Colors.white),
-        ),
-        errorWidget: (context, _, __) => Container(
-          width: width,
-          height: height,
-          color: Colors.grey.shade200,
-          child: const Icon(Icons.image_not_supported_outlined),
-        ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final displayWidth = width != null && width!.isFinite
+              ? constraints.constrainWidth(width!)
+              : constraints.maxWidth;
+          final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+          // Decode at the display's physical width, preserving aspect ratio.
+          // Fall back to the original image when no finite width is available.
+          final decodeWidth = displayWidth.isFinite && displayWidth > 0
+              ? (displayWidth * pixelRatio).ceil()
+              : null;
+
+          return CachedNetworkImage(
+            imageUrl: url,
+            width: width,
+            height: height,
+            fit: fit,
+            memCacheWidth: decodeWidth,
+            placeholder: (context, _) => Shimmer.fromColors(
+              baseColor: Colors.grey.shade300,
+              highlightColor: Colors.grey.shade100,
+              child: Container(width: width, height: height, color: Colors.white),
+            ),
+            errorWidget: (context, _, __) => Container(
+              width: width,
+              height: height,
+              color: Colors.grey.shade200,
+              child: const Icon(Icons.image_not_supported_outlined),
+            ),
+          );
+        },
       ),
     );
   }

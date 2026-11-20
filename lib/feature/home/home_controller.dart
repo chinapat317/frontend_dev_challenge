@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:pull_to_refresh/pull_to_refresh.dart';
@@ -6,10 +8,15 @@ import '../../model/deal_model.dart';
 import '../../repository/deal_repo.dart';
 import '../../util/log_service.dart';
 
-class HomeController extends GetxController {
+class HomeController extends GetxController with WidgetsBindingObserver {
   final DealRepo dealRepo;
+  final DateTime Function() _now;
 
-  HomeController({required this.dealRepo});
+  HomeController({required this.dealRepo, DateTime Function()? now})
+      : _now = now ?? DateTime.now;
+
+  Timer? _midnightTimer;
+  DateTime? _lastActiveDate;
 
   final deals = <DealModel>[].obs;
   final flashDeals = <DealModel>[].obs;
@@ -35,8 +42,32 @@ class HomeController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    WidgetsBinding.instance.addObserver(this);
+    _checkDateAndScheduleRefresh();
     scrollController.addListener(_onScroll);
     _initialLoad();
+  }
+
+  void _checkDateAndScheduleRefresh() {
+    if (isClosed) return;
+    _midnightTimer?.cancel();
+    final now = _now().toLocal();
+    final today = DateUtils.dateOnly(now);
+    if (_lastActiveDate != null && _lastActiveDate != today) {
+      unawaited(_initialLoad());
+    }
+    _lastActiveDate = today;
+    // Use local calendar midnight, including days shorter or longer than 24h.
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnightTimer =
+        Timer(nextMidnight.difference(now), _checkDateAndScheduleRefresh);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkDateAndScheduleRefresh();
+    }
   }
 
   void _onScroll() {
@@ -53,11 +84,12 @@ class HomeController extends GetxController {
     } catch (e) {
       LogService.error('initial load failed', e);
     }
-    isLoading.value = false;
+    if (!isClosed) isLoading.value = false;
   }
 
   Future<void> _loadFlashDeals() async {
-    flashDeals.assignAll(await dealRepo.fetchFlashDeals());
+    final result = await dealRepo.fetchFlashDeals();
+    if (!isClosed) flashDeals.assignAll(result);
   }
 
   Future<void> refreshDeals() async {
@@ -119,6 +151,8 @@ class HomeController extends GetxController {
 
   @override
   void onClose() {
+    _midnightTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     scrollController.dispose();
     refreshController.dispose();
     super.onClose();

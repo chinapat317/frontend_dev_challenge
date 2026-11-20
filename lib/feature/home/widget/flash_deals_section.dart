@@ -6,6 +6,7 @@ import '../../../model/deal_model.dart';
 import '../../../routes/routes.dart';
 import '../../shared_widget/the_network_image.dart';
 import '../../shared_widget/flash_sale_countdown.dart';
+import '../../shared_widget/deal_impression_tracker.dart';
 
 /// Horizontal flash-sale rail.
 class FlashDealsSection extends StatelessWidget {
@@ -38,6 +39,7 @@ class FlashDealsSection extends StatelessWidget {
             itemBuilder: (context, index) {
               final deal = deals[index];
               return SizedBox(
+                key: ValueKey(deal.id),
                 width: 200,
                 child: FlashSaleCardState(
                   endsAt: deal.flashSaleEndsAt,
@@ -46,62 +48,70 @@ class FlashDealsSection extends StatelessWidget {
                     elevation: 0.5,
                     clipBehavior: Clip.antiAlias,
                     margin: const EdgeInsets.symmetric(horizontal: 4),
-                    child: InkWell(
-                      onTap: () => Get.toNamed(
-                        Routes.dealRoute(deal.id, source: 'flash_rail'),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          TheNetworkImage(
-                              url: deal.imageUrl,
-                              height: 90,
-                              width: double.infinity),
-                          Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(deal.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600)),
-                                Text(deal.storeName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        fontSize: 11.5,
-                                        color: Colors.grey.shade600)),
-                                const SizedBox(height: 6),
-                                Row(
-                                  children: [
-                                    Text('฿${deal.price.toStringAsFixed(0)}',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: AppConfig.primaryGreen)),
-                                    const Spacer(),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.red.shade50,
-                                        borderRadius: BorderRadius.circular(4),
+                    child: DealImpressionTracker(
+                      dealId: deal.id,
+                      source: 'flash_rail',
+                      position: index,
+                      imageUrl: deal.imageUrl,
+                      child: InkWell(
+                        onTap: () => Get.toNamed(
+                          Routes.dealRoute(deal.id, source: 'flash_rail'),
+                          arguments: deal,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            TheNetworkImage(
+                                url: deal.imageUrl,
+                                height: 90,
+                                width: double.infinity),
+                            Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(deal.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600)),
+                                  Text(deal.storeName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: Colors.grey.shade600)),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Text('฿${deal.price.toStringAsFixed(0)}',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: AppConfig.primaryGreen)),
+                                      const Spacer(),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.shade50,
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: FlashSaleCountdown(
+                                            endsAt: deal.flashSaleEndsAt!,
+                                            style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600,
+                                                color: Colors.red.shade700)),
                                       ),
-                                      child: FlashSaleCountdown(
-                                          endsAt: deal.flashSaleEndsAt!,
-                                          style: TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.red.shade700)),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),

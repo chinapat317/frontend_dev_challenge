@@ -11,16 +11,14 @@ class CartController extends GetxController {
 
   CartController({required this.cartService, required this.orderRepo});
 
-  final isCheckingOut = false.obs;
+  RxBool get isCheckingOut => cartService.isCheckingOut;
 
   Future<void> checkout() async {
-    if (isCheckingOut.value) return;
-    // Let the user review the updated total before submitting a changed bag.
-    if (cartService.removeExpired() > 0 || cartService.items.isEmpty) return;
-    isCheckingOut.value = true;
+    final snapshot = cartService.beginCheckout();
+    if (snapshot == null) return;
     try {
-      final order = await orderRepo.checkout(cartService.items.toList());
-      cartService.clear();
+      final order = await orderRepo.checkout(snapshot);
+      cartService.finishCheckout(purchased: true);
       Get.snackbar(
         'Order confirmed',
         'Order #${order.id} — pick up soon!',
@@ -28,12 +26,23 @@ class CartController extends GetxController {
       );
     } on ApiException catch (e) {
       LogService.error('checkout failed', e);
+      cartService.finishCheckout(invalidate: e.statusCode == 410);
       Get.snackbar(
-        'Checkout failed',
-        e.message,
+        e.statusCode == 410 ? 'Hold expired' : 'Checkout failed',
+        e.statusCode == 410
+            ? 'Your holds are no longer valid. Please add the deals again to reserve them before checkout.'
+            : e.statusCode == 502
+                ? 'Payment timed out. Your card was not charged. Please review your bag and try again.'
+                : 'We couldn’t complete checkout. Please review your bag and try again.',
         snackPosition: SnackPosition.BOTTOM,
       );
+    } catch (e) {
+      LogService.error('checkout failed', e);
+      Get.snackbar('Checkout failed',
+          'We couldn’t confirm your order. Please check My orders before trying again.',
+          snackPosition: SnackPosition.BOTTOM);
+    } finally {
+      cartService.finishCheckout();
     }
-    isCheckingOut.value = false;
   }
 }

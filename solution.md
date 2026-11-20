@@ -139,22 +139,22 @@ The details controller cast `Get.arguments` directly to `DealModel`. Home and fl
 
 #### Solution
 
-Capture `id` and `source` from `Get.parameters` in `onInit()`. Validate the ID and load the full model through `DealRepo.fetchById()`. The ID selects the deal; source is attribution metadata for `deal_details_view`, defaulting to `unknown`. Capture both before awaiting so navigating elsewhere cannot change a pending request's attribution or a retry's ID.
+Capture `id` and `source` from `Get.parameters` in `onInit()`. Use a `DealModel` supplied through `Get.arguments` immediately, as home/search cards and the flash rail already have the full object. When no model argument is available, validate the URL ID and load the full model through `DealRepo.fetchById()`. Source is attribution metadata for `deal_details_view`, defaulting to `unknown`. Capture the parameters before awaiting so navigating elsewhere cannot change a pending request's attribution or a retry's ID.
 
-Expose a nullable observable deal with loading and error state. Show the loading indicator until the request finishes, then render the existing details content and Add to bag action. Failed requests show a readable error and allow retrying the same ID. Remove `arguments: deal` from shared cards and the flash rail so all entry points use the same parameter-based contract.
+Expose a nullable observable deal with loading and error state. Card navigation passes `arguments: deal` and displays the details immediately without an initial request. Deep links show a loading indicator until the request finishes, then render the existing details content and Add to bag action. Failed requests show a readable error and allow retrying the same ID.
 
-Create the cart availability worker only after successful loading and dispose it safely when the controller closes. Ignore results after closure, including when the user leaves during the initial request. Availability refresh failures are logged rather than becoming unhandled asynchronous errors.
+Initialize quantity, view analytics, and the cart availability worker through one shared method for both the argument and fetched-model paths. Dispose the worker safely when the controller closes. Ignore results after closure, including when the user leaves during the initial request. Availability refresh failures are logged rather than becoming unhandled asynchronous errors.
 
 #### Alternatives considered and edge cases
 
-- Keeping the argument as a fast path would avoid a request after a card tap, but would retain two data-loading paths and could display stale card data. The requested implementation always loads by route ID.
+- Always fetching by URL ID would give both entry points fresh data, but adds a request and a loading delay after every card tap. Using the passed model preserves the previous card behavior; the existing cart availability checks still refresh stock when the cart changes. Other model fields retain the card's snapshot until the page is reopened.
 - Making the cast nullable or redirecting every deep link to an error screen would avoid the original exception without loading an existing deal. Neither fulfills this ticket.
-- Missing, malformed, zero, and negative IDs do not trigger API requests. A 404 shows an unavailable message; other failures offer retry. No view event is emitted for failed or abandoned loads.
+- Without a model argument, missing, malformed, zero, and negative IDs do not trigger API requests. A 404 shows an unavailable message; other failures offer retry. No view event is emitted for failed or abandoned loads. A supplied `DealModel` takes precedence over URL ID validation; non-model arguments use the URL fallback.
 - Platform cold/warm-launch delivery and stacking multiple instances of the deal route were not exercised by these tests. Native link configuration was left unchanged.
 
 #### Validation and AI usage
 
-`flutter test --no-pub test/deal_details_test.dart` passed all 11 tests on the pinned Flutter 3.27.0 SDK. Coverage includes query-only navigation to deal 42, loading state, loaded content and Add to bag, parameter capture, invalid IDs, 404, failed-request retry, leaving during loading, and cart worker cleanup. Flutter analysis of the changed Dart files and test found no issues. Android device reproduction was not performed.
+`flutter test --no-pub test/deal_details_test.dart` passed all 15 tests on the pinned Flutter 3.27.0 SDK. Coverage includes query-only navigation to deal 42, real shared-card and flash-rail navigation using model arguments without an initial fetch, model precedence over an invalid URL ID, non-model argument fallback, loading state, loaded content and Add to bag, source attribution, parameter capture, invalid IDs, 404, failed-request retry, leaving during loading, and cart worker cleanup. Flutter analysis of the changed Dart files and test found no issues. Android device reproduction was not performed.
 
 Codex traced the route/controller flow, implemented the change, and wrote and ran the regression tests. Its first test cleanup incorrectly used `await Get.reset()`; compilation showed this version returns `void`, so cleanup was corrected to call it synchronously before the successful test run.
 
@@ -183,6 +183,17 @@ expired boolean changes. Cards retain their expensive child subtree, dim at
 expiry, and block pointer and keyboard interaction. The details Add to bag
 button becomes disabled and displays `Expired`.
 
+Details opened from a card use its `DealModel` argument immediately, preserving
+the original flash-sale deadline without another initial request. ID-only deep
+links fetch the model. Both paths share quantity, analytics, and availability
+worker initialization. Cart changes still recheck stock; countdown ticks do
+not fetch data. F-1 tests navigate through the real route for both entry paths
+and verify live expiry, bag removal, rejection of already-expired deals, and
+worker cleanup after leaving the page.
+
+Model-first refactor validation: the full `flutter test --no-pub` suite passes
+all 51 tests, including both F-1 entry paths and RES-101–107 regressions.
+
 Bag expiry belongs to the app-wide `CartService`, not a card or details
 controller. It keeps its own subscription to the nearest bag deadline, removes
 all expired lines in one update, recalculates count/total, and shows one bottom
@@ -200,7 +211,7 @@ confirmed. The fake checkout endpoint does not enforce flash-sale deadlines,
 and the client cannot cancel or undo an accepted backend order. Both cases are
 covered by controlled-request tests.
 
-#### AI usage and time
+#### AI usage
 
 Codex implemented the clock, widgets, bag guards, integration, regression tests,
 and this write-up. Its first lifecycle test incorrectly awaited
@@ -212,3 +223,83 @@ mistake; the test now installs the callback after initial layout and counts all
 subsequent builds. A test also assumed a shorter GetX snackbar close animation;
 the pinned package defaults to one second, so teardown now finishes that
 animation before disposing the overlay.
+
+### F-2 — Impression tracking
+
+`DealImpressionTracker` measures the content bounds of each home, search, and
+flash-rail card, excluding the surrounding card margins. A card starts one
+one-shot timer only after its image's first successfully decoded frame has
+rendered and at least 50% of its area is visible. Changes that stay
+above 50% preserve the timer; falling below cancels it. The interval must be
+continuous, so separate short visits never accumulate. A deal/source change,
+route coverage (including popup routes), app inactivity, or widget removal
+also cancels qualification. Resume/uncover rechecks visibility and starts a
+fresh interval. The horizontal rail is clipped by both its own viewport and
+the outer vertical viewport.
+
+`AnalyticsService` synchronously claims the deal ID in an app-session set before
+recording `deal_impression`. This makes deduplication global across simultaneous
+placements, screen navigation, filtering, refreshes, and widget remounts. The
+first qualifying placement wins attribution. Sources are `home_feed`,
+`flash_rail`, and `search`; positions are zero-based indexes in the displayed
+list (after filtering). Position changes alone preserve dwell and the event
+captures the index when it qualifies. A fresh app session gets a new set.
+
+All events logged through the service, including existing screen/detail views,
+enter the same delivery queue. Ten queued events trigger a request immediately;
+otherwise the oldest unsent event sets a 15-second deadline. Later arrivals
+do not move that deadline. Requests contain at most ten events and never overlap.
+New arrivals stay behind the in-flight snapshot; success removes only that
+snapshot and checks whether the remaining queue is already due. Debug history
+remains visible after successful delivery. Failure retains the original events
+and retries after 1, 2, 4, 8, 16, then at most 30 seconds, without relogging or
+releasing session deduplication. Resume reconciles overdue queue deadlines.
+The supplied fake endpoint and seed assets were not changed.
+
+#### Performance and alternatives
+
+Visibility callbacks only update plain fields and start/cancel qualification
+timers. They do not update feed observables or call `setState` while scrolling.
+When tracking finishes, only the small tracker boundary rebuilds once to
+disable its detector callback; its expensive card child is retained. There is
+no per-frame Dart polling loop and no periodic timer per card. Existing lazy
+lists, scoped flash countdowns, and image decoding behavior are preserved.
+
+The package's default 500 ms callback batching can miss a short dip below 50%,
+so production uses frame-end visibility notifications. This trades additional
+geometry work during scrolling for accurate threshold interruptions. A manual
+scroll listener with per-card global-coordinate queries was rejected because
+it duplicates clipping logic, especially for nested scrolling. Per-screen
+deduplication was rejected because the same deal appears on multiple screens.
+A periodic 15-second flush was rejected because its schedule would not be tied
+to the first unsent event.
+
+Visibility is defined by viewport clipping. The package does not detect arbitrary
+sibling occlusion or opacity; explicit route/app lifecycle guards cover common
+screen/dialog/background cases. Delivery is in memory and best effort across
+process termination. No persistence or server-side idempotency contract was
+added; a real transport failure after server acceptance could require server
+deduplication to guarantee exactly-once delivery.
+
+F-2 startup correction: `AnalyticsService` accepts an optional nullable API
+parameter. An untyped `Get.find()` in its production registration therefore
+inferred `FakeApiService?`, which GetX treats as a different registration key
+from `FakeApiService`. Initialization threw before `runApp`, leaving the native
+splash visible. The lookup now explicitly requests `Get.find<FakeApiService>()`.
+The earlier feature tests supplied their own dependencies and missed this
+production wiring error. A new bootstrap test exercises the real initializer,
+including bundled asset loading and lazy repository resolution; it reproduced
+the exact startup exception before the fix.
+
+Image-ready refinement requested after F-2: placeholders and failed images do
+not qualify, regardless of how long the card is visible. `TheNetworkImage`
+notifies the nearest tracker after its decoded image frame renders. This signal
+starts a fresh one-second interval without rebuilding the card/feed. The same
+rule applies to memory-cached images. If the URL changes before qualification,
+readiness and dwell reset; stale completion for the old URL is ignored. Successful
+loading while offscreen does not start dwell until visibility reaches 50%.
+The custom image builder retains the resized image provider/cache key, preserving
+the RES-105 display-sized decoding fix. Ten new deterministic image-stream tests
+cover success, delay, failure, cached loading, clipping, URL replacement, all
+three card placements, decode width, and rebuild isolation. No backend or package
+changes were needed; no device profiling was performed for this refinement.

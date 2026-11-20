@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../app_config.dart';
 import '../shared_widget/the_network_image.dart';
 import 'cart_controller.dart';
+import 'widget/reservation_countdown.dart';
 
 class CartScreen extends GetView<CartController> {
   const CartScreen({super.key});
@@ -14,15 +15,28 @@ class CartScreen extends GetView<CartController> {
     return Scaffold(
       appBar: AppBar(title: const Text('My bag')),
       body: Obx(() {
-        if (cart.items.isEmpty) {
-          return const Center(child: Text('Your bag is empty'));
+        final locked = cart.isCheckingOut.value;
+        final lines = cart.items.toList();
+        if (lines.isEmpty) {
+          return Center(
+              child: locked
+                  ? const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 12),
+                        Text('Confirming your order…'),
+                      ],
+                    )
+                  : const Text('Your bag is empty'));
         }
         return ListView.builder(
           padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: cart.items.length,
+          itemCount: lines.length,
           itemBuilder: (context, index) {
-            final item = cart.items[index];
+            final item = lines[index];
             return Card(
+              key: ValueKey(item.deal.id),
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               color: Colors.white,
               elevation: 0.5,
@@ -45,12 +59,19 @@ class CartScreen extends GetView<CartController> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w600)),
+                                  fontSize: 14.5, fontWeight: FontWeight.w600)),
+                          if (item.pendingCount > 0)
+                            Text('Reserving ${item.pendingCount}…',
+                                style: const TextStyle(fontSize: 12)),
+                          if (item.nextExpiry != null)
+                            ReservationCountdown(
+                              expiresAt: item.nextExpiry!,
+                              clock: cart.flashSales,
+                              multiple: item.quantity - item.pendingCount > 1,
+                            ),
                           Text(item.deal.storeName,
                               style: TextStyle(
-                                  fontSize: 12.5,
-                                  color: Colors.grey.shade600)),
+                                  fontSize: 12.5, color: Colors.grey.shade600)),
                           Text('฿${item.deal.price.toStringAsFixed(0)} each',
                               style: const TextStyle(
                                   fontSize: 13,
@@ -59,20 +80,37 @@ class CartScreen extends GetView<CartController> {
                         ],
                       ),
                     ),
-                    Row(
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.remove_circle_outline),
-                          onPressed: () => cart.decrement(item.deal.id),
+                        Row(
+                          children: [
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.remove_circle_outline),
+                              tooltip: 'Reduce quantity',
+                              onPressed: locked
+                                  ? null
+                                  : () => cart.decrement(item.deal.id),
+                            ),
+                            Text('${item.quantity}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.add_circle_outline),
+                              tooltip: 'Increase quantity',
+                              onPressed: locked ||
+                                      item.quantity >= item.deal.quantityLeft
+                                  ? null
+                                  : () => cart.add(item.deal),
+                            ),
+                          ],
                         ),
-                        Text('${item.quantity}',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold)),
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.add_circle_outline),
-                          onPressed: () => cart.add(item.deal),
+                        TextButton(
+                          onPressed:
+                              locked ? null : () => cart.remove(item.deal.id),
+                          child: const Text('Remove'),
                         ),
                       ],
                     ),
@@ -103,15 +141,13 @@ class CartScreen extends GetView<CartController> {
               const SizedBox(width: 24),
               Expanded(
                 child: FilledButton(
-                  onPressed: controller.isCheckingOut.value
-                      ? null
-                      : controller.checkout,
+                  onPressed: cart.canCheckout ? controller.checkout : null,
                   child: controller.isCheckingOut.value
                       ? const SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Checkout'),
+                      : Text(cart.hasPending ? 'Reserving…' : 'Checkout'),
                 ),
               ),
             ],

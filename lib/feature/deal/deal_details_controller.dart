@@ -36,7 +36,12 @@ class DealDetailsController extends GetxController {
     // Capture route parameters before awaiting: another route can change them.
     _dealId = int.tryParse(Get.parameters['id'] ?? '');
     _source = Get.parameters['source'] ?? 'unknown';
-    loadDeal();
+    final argument = Get.arguments;
+    if (argument is DealModel) {
+      _setDeal(argument);
+    } else {
+      loadDeal();
+    }
   }
 
   Future<void> loadDeal() async {
@@ -52,15 +57,7 @@ class DealDetailsController extends GetxController {
     try {
       final loadedDeal = await dealRepo.fetchById(id);
       if (isClosed) return;
-      _quantityLeft.value = loadedDeal.quantityLeft;
-      _deal.value = loadedDeal;
-      analytics.logEvent('deal_details_view', {
-        'deal_id': loadedDeal.id,
-        'source': _source,
-      });
-      // Only watch cart changes once a deal is ready.
-      _cartCounter ??=
-          ever(cartService.itemCount, (_) => _recheckAvailability());
+      _setDeal(loadedDeal);
     } on ApiException catch (e) {
       if (isClosed) return;
       error.value = e.statusCode == 404
@@ -73,6 +70,17 @@ class DealDetailsController extends GetxController {
     } finally {
       if (!isClosed) isLoading.value = false;
     }
+  }
+
+  void _setDeal(DealModel loadedDeal) {
+    _quantityLeft.value = loadedDeal.quantityLeft;
+    _deal.value = loadedDeal;
+    analytics.logEvent('deal_details_view', {
+      'deal_id': loadedDeal.id,
+      'source': _source,
+    });
+    // Both entry paths need the same availability updates and cleanup.
+    _cartCounter ??= ever(cartService.itemCount, (_) => _recheckAvailability());
   }
 
   @override
@@ -98,6 +106,12 @@ class DealDetailsController extends GetxController {
     final deal = this.deal;
     if (isClosed || deal == null) return;
     final result = cartService.add(deal);
+    if (result == AddToBagResult.checkoutInProgress) {
+      Get.snackbar('Checkout in progress',
+          'Please wait for your order to finish before changing your bag.',
+          snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
     if (result != AddToBagResult.added) {
       Get.snackbar(
         result == AddToBagResult.expired ? 'Flash sale expired' : 'Unavailable',
@@ -110,7 +124,7 @@ class DealDetailsController extends GetxController {
     }
     Get.snackbar(
       'Added to bag',
-      '${deal.name} — pick up ${deal.pickupWindow.label}',
+      '${deal.name} — reserving your bag…',
       snackPosition: SnackPosition.BOTTOM,
       duration: const Duration(seconds: 2),
     );

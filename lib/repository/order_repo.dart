@@ -16,13 +16,30 @@ class OrderRepo extends GetxService {
   }
 
   Future<OrderModel> checkout(List<CartItemModel> items) async {
+    if (items.isEmpty || items.any((item) => item.units.isEmpty)) {
+      throw StateError('Cannot check out an empty bag or line.');
+    }
+    final ids = <String>{};
+    for (final item in items) {
+      for (final unit in item.units) {
+        final hold = unit.reservation;
+        if (hold == null ||
+            hold.id.isEmpty ||
+            hold.dealId != item.deal.id ||
+            hold.quantity != 1 ||
+            !ids.add(hold.id)) {
+          throw StateError('Every unit needs its own matching reservation.');
+        }
+      }
+    }
     final json = await api.checkout([
       for (final item in items)
-        {
-          'dealId': item.deal.id,
-          'quantity': item.quantity,
-          'reservationId': item.reservation?.id,
-        }
+        for (final unit in item.units)
+          {
+            'dealId': item.deal.id,
+            'quantity': 1,
+            'reservationId': unit.reservation!.id,
+          }
     ]);
     return OrderModel.fromJson(json);
   }

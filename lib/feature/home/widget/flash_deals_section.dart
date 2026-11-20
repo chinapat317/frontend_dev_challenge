@@ -49,7 +49,6 @@ class FlashDealsSection extends StatelessWidget {
                   child: InkWell(
                     onTap: () => Get.toNamed(
                       Routes.dealRoute(deal.id, source: 'flash_rail'),
-                      arguments: deal,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

@@ -111,7 +111,7 @@ After:
 
 ![After: DevTools frame chart and widget rebuild counts](img_solution/after.png)
 
-### RES-106
+### RES-106 (30 min)
 
 #### Cause
 
@@ -130,3 +130,30 @@ Observe app lifecycle changes and refresh on resume if the local date changed wh
 #### Alternatives considered
 
 - A separate reactive date used by the filter could update the list without fetching data. Reusing the existing page refresh was chosen to keep filtering in `isToday` and reload the home page through its existing flow.
+
+### RES-107 (approximately 1 hour)
+
+#### Cause
+
+The details controller cast `Get.arguments` directly to `DealModel`. Home and flash cards supplied that object, but deep links supply only URL parameters. For `/deal?id=42&source=push`, `Get.parameters` contains the ID and source while `Get.arguments` is null. The cast therefore failed during controller initialization, before any deal request could run. The screen also read a synchronous `late final deal`, so adding an asynchronous request alone would leave a second initialization problem.
+
+#### Solution
+
+Capture `id` and `source` from `Get.parameters` in `onInit()`. Validate the ID and load the full model through `DealRepo.fetchById()`. The ID selects the deal; source is attribution metadata for `deal_details_view`, defaulting to `unknown`. Capture both before awaiting so navigating elsewhere cannot change a pending request's attribution or a retry's ID.
+
+Expose a nullable observable deal with loading and error state. Show the loading indicator until the request finishes, then render the existing details content and Add to bag action. Failed requests show a readable error and allow retrying the same ID. Remove `arguments: deal` from shared cards and the flash rail so all entry points use the same parameter-based contract.
+
+Create the cart availability worker only after successful loading and dispose it safely when the controller closes. Ignore results after closure, including when the user leaves during the initial request. Availability refresh failures are logged rather than becoming unhandled asynchronous errors.
+
+#### Alternatives considered and edge cases
+
+- Keeping the argument as a fast path would avoid a request after a card tap, but would retain two data-loading paths and could display stale card data. The requested implementation always loads by route ID.
+- Making the cast nullable or redirecting every deep link to an error screen would avoid the original exception without loading an existing deal. Neither fulfills this ticket.
+- Missing, malformed, zero, and negative IDs do not trigger API requests. A 404 shows an unavailable message; other failures offer retry. No view event is emitted for failed or abandoned loads.
+- Platform cold/warm-launch delivery and stacking multiple instances of the deal route were not exercised by these tests. Native link configuration was left unchanged.
+
+#### Validation and AI usage
+
+`flutter test --no-pub test/deal_details_test.dart` passed all 11 tests on the pinned Flutter 3.27.0 SDK. Coverage includes query-only navigation to deal 42, loading state, loaded content and Add to bag, parameter capture, invalid IDs, 404, failed-request retry, leaving during loading, and cart worker cleanup. Flutter analysis of the changed Dart files and test found no issues. Android device reproduction was not performed.
+
+Codex traced the route/controller flow, implemented the change, and wrote and ran the regression tests. Its first test cleanup incorrectly used `await Get.reset()`; compilation showed this version returns `void`, so cleanup was corrected to call it synchronously before the successful test run.

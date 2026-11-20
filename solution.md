@@ -61,3 +61,19 @@ Request order can be controlled with repository test doubles and `Completer` obj
 #### Solution
 
 Use `_isRefresh` to prevent overlapping refreshes and block new pagination requests while refresh is running. After a successful refresh, reset `_page` to 1 and `_nextPage` to 2. Compare the pagination state before accepting a response or handling an error so that stale requests cannot update the refreshed feed. Roll back the page counter only when the current pagination request fails, allowing the same page to be retried. Clear loading flags in `finally`, report current failures through the refresh controller, and reset the exhausted footer after a successful refresh.
+
+### RES-105 (about 5 minutes; partial: scroll-triggered rebuilds)
+
+#### Cause
+
+Every scroll-offset change updated an observable read by the `Obx` wrapping the whole home screen. Scrolling repeatedly rebuilt the screen and recreated widgets for all loaded deals, even when the app-bar shadow and button visibility did not need to change.
+
+#### Solution
+
+Keep the feed's data observer inside the Scaffold body. Replace the observable pixel offset with `showScrollToTop`, updating it only when scrolling crosses the 800-logical-pixel threshold. A separate `Obx` around the button shows it only when the offset is greater than 800 and hides it at or below 800, including during the scroll-to-top animation. Scrolling within either range causes no reactive update. Flutter's built-in `scrolledUnderElevation` handles the app-bar shadow without a feed rebuild; this replaces the previous custom 4-pixel shadow threshold.
+
+Removing the listener entirely and showing the button all the time was considered, but rejected because the button should retain its original visibility threshold. The existing controller still disposes its scroll controller on close.
+
+This change only addresses scroll-triggered rebuilds. Lazy card construction, image decode sizing, and before/after DevTools measurements remain outstanding; the full RES-105 ticket is not complete.
+
+Validation: Dart static analysis of the home screen and controller passed with no issues, and `git diff --check` passed. Device UI behavior and DevTools measurements have not been verified.

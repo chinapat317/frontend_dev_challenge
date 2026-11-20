@@ -97,7 +97,17 @@ class DealDetailsController extends GetxController {
   void addToCart() {
     final deal = this.deal;
     if (isClosed || deal == null) return;
-    cartService.add(deal);
+    final result = cartService.add(deal);
+    if (result != AddToBagResult.added) {
+      Get.snackbar(
+        result == AddToBagResult.expired ? 'Flash sale expired' : 'Unavailable',
+        result == AddToBagResult.expired
+            ? 'This flash sale has ended.'
+            : 'There are no more bags available for this deal.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
     Get.snackbar(
       'Added to bag',
       '${deal.name} — pick up ${deal.pickupWindow.label}',

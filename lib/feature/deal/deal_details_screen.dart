@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../app_config.dart';
 import '../../model/deal_model.dart';
 import '../shared_widget/the_network_image.dart';
+import '../shared_widget/flash_sale_countdown.dart';
 import 'deal_details_controller.dart';
 
 class DealDetailsScreen extends GetView<DealDetailsController> {
@@ -70,6 +71,22 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
                       style:
                           TextStyle(fontSize: 13, color: Colors.grey.shade500)),
                   const SizedBox(height: 16),
+                  if (deal.flashSaleEndsAt != null) ...[
+                    Row(
+                      children: [
+                        const Icon(Icons.bolt, color: Colors.red, size: 20),
+                        const Text('Flash sale · ',
+                            style: TextStyle(color: Colors.red)),
+                        FlashSaleCountdown(
+                          endsAt: deal.flashSaleEndsAt!,
+                          flashSales: controller.cartService.flashSales,
+                          style: const TextStyle(
+                              color: Colors.red, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   Row(
                     children: [
                       Text('฿${deal.price.toStringAsFixed(0)}',
@@ -162,10 +179,14 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
         color: Colors.white,
         child: SizedBox(
           width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: controller.addToCart,
-            icon: const Icon(Icons.add_shopping_cart),
-            label: const Text('Add to bag'),
+          child: FlashSaleState(
+            endsAt: deal.flashSaleEndsAt,
+            flashSales: controller.cartService.flashSales,
+            builder: (expired, _) => FilledButton.icon(
+              onPressed: expired ? null : controller.addToCart,
+              icon: const Icon(Icons.add_shopping_cart),
+              label: Text(expired ? 'Expired' : 'Add to bag'),
+            ),
           ),
         ),
       ),

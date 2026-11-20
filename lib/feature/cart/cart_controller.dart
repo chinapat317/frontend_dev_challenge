@@ -14,7 +14,9 @@ class CartController extends GetxController {
   final isCheckingOut = false.obs;
 
   Future<void> checkout() async {
-    if (cartService.items.isEmpty || isCheckingOut.value) return;
+    if (isCheckingOut.value) return;
+    // Let the user review the updated total before submitting a changed bag.
+    if (cartService.removeExpired() > 0 || cartService.items.isEmpty) return;
     isCheckingOut.value = true;
     try {
       final order = await orderRepo.checkout(cartService.items.toList());

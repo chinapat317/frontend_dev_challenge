@@ -157,3 +157,58 @@ Create the cart availability worker only after successful loading and dispose it
 `flutter test --no-pub test/deal_details_test.dart` passed all 11 tests on the pinned Flutter 3.27.0 SDK. Coverage includes query-only navigation to deal 42, loading state, loaded content and Add to bag, parameter capture, invalid IDs, 404, failed-request retry, leaving during loading, and cart worker cleanup. Flutter analysis of the changed Dart files and test found no issues. Android device reproduction was not performed.
 
 Codex traced the route/controller flow, implemented the change, and wrote and ran the regression tests. Its first test cleanup incorrectly used `await Get.reset()`; compilation showed this version returns `void`, so cleanup was corrected to call it synchronously before the successful test run.
+
+## Part B
+
+### F-1 — Live flash-sale countdowns
+
+#### Implementation and decisions
+
+`FlashSaleService` owns one shared one-shot timer, scheduled for the next second
+boundary or the nearest exact expiry, whichever comes first. Mounted countdowns
+and the bag register callbacks and unsubscribe when disposed. The timer stops
+when no future deadlines are watched and pauses while the app is inactive. On
+resume, every subscriber reconciles against the current instant. The clock is
+injectable so tests can advance time deterministically.
+
+Remaining time is calculated from `flashSaleEndsAt`, never by decrementing a
+counter. UTC and local timestamps representing the same instant give the same
+answer. Positive fractional seconds round up; an active sale never displays
+`00:00`. At an hour the format becomes `hh:mm:ss`; below an hour it is `mm:ss`.
+At or past the deadline the label is `Expired`.
+
+`FlashSaleCountdown` rebuilds only its Text. It is used by the flash rail, shared
+home/search cards, and the details page. `FlashSaleState` changes only when the
+expired boolean changes. Cards retain their expensive child subtree, dim at
+expiry, and block pointer and keyboard interaction. The details Add to bag
+button becomes disabled and displays `Expired`.
+
+Bag expiry belongs to the app-wide `CartService`, not a card or details
+controller. It keeps its own subscription to the nearest bag deadline, removes
+all expired lines in one update, recalculates count/total, and shows one bottom
+notice naming the removed deal or reporting the number removed. This works
+when no deal card is mounted. Removing or clearing a line updates the watch.
+`add()` also checks the timestamp synchronously, returns an explicit result,
+and rejects expired deals. The details controller shows success only after a
+successful add; stock-limit failures no longer produce a false success notice.
+
+Checkout rechecks expiry immediately before submission. If that removes any
+lines, submission stops so the user can review the changed bag and total.
+Once a request has been submitted, its backend result remains authoritative:
+expiry still removes the local line, but a successful submitted order is
+confirmed. The fake checkout endpoint does not enforce flash-sale deadlines,
+and the client cannot cancel or undo an accepted backend order. Both cases are
+covered by controlled-request tests.
+
+#### AI usage and time
+
+Codex implemented the clock, widgets, bag guards, integration, regression tests,
+and this write-up. Its first lifecycle test incorrectly awaited
+`handleAppLifecycleStateChanged`, which returns void in this SDK; compilation
+caught that and the awaits were removed. Its first rebuild counter filtered on
+`builtOnce`, but in this Flutter version that flag is only set when verbose
+rebuild logging is enabled. Reading the framework implementation showed the
+mistake; the test now installs the callback after initial layout and counts all
+subsequent builds. A test also assumed a shorter GetX snackbar close animation;
+the pinned package defaults to one second, so teardown now finishes that
+animation before disposing the overlay.

@@ -61,19 +61,3 @@ Request order can be controlled with repository test doubles and `Completer` obj
 #### Solution
 
 Use `_isRefresh` to prevent overlapping refreshes and block new pagination requests while refresh is running. After a successful refresh, reset `_page` to 1 and `_nextPage` to 2. Compare the pagination state before accepting a response or handling an error so that stale requests cannot update the refreshed feed. Roll back the page counter only when the current pagination request fails, allowing the same page to be retried. Clear loading flags in `finally`, report current failures through the refresh controller, and reset the exhausted footer after a successful refresh.
-
-### RES-105 (about 5 minutes; partial: scroll-triggered rebuilds)
-
-#### Cause
-
-Every scroll offset change updated an observable read by the `Obx` wrapping the entire home screen. This repeatedly rebuilt the screen and recreated widgets for all loaded deals, even though the offset was only used for the app-bar shadow and scroll-to-top button.
-
-#### Solution
-
-Remove the reactive scroll offset and its listener, and scope the remaining `Obx` to the feed body so loading, pagination, and filter changes still update the feed. Use Flutter's built-in `scrolledUnderElevation` for the app-bar shadow and keep the scroll-to-top button always available. The scroll controller remains only for normal scrolling and the button's animation.
-
-Keeping a reactive offset with separate observers for the app bar and button would preserve the previous visibility threshold, but removing the custom listener is simpler and avoids publishing every pixel change. The tradeoff is that the button is visible even at the top.
-
-This addresses only the scroll-triggered rebuild contributor. Lazy card construction, image decode sizing, and before/after DevTools measurements remain outstanding; the full RES-105 ticket is not complete.
-
-Validation: Dart static analysis of the home screen and controller passed with no issues. Device scrolling and DevTools profiling have not been verified.

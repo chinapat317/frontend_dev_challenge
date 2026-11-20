@@ -21,8 +21,10 @@ class HomeController extends GetxController {
   final refreshController = RefreshController();
 
   int _page = 1;
+  int _nextPage = 2;
   int _totalPages = 1;
   bool _isFetchingMore = false;
+  bool _isRefresh = false;
 
   bool get hasMore => _page < _totalPages;
 
@@ -56,31 +58,55 @@ class HomeController extends GetxController {
   }
 
   Future<void> refreshDeals() async {
-    _page = 1;
-    final res = await dealRepo.fetchDeals(page: 1);
-    _totalPages = res.totalPages;
-    deals.assignAll(res.items);
-    refreshController.refreshCompleted();
+    if (_isRefresh || isClosed) return;
+    _isRefresh = true;
+    // Requests started before this refresh no longer belong to the feed.
+    try {
+      final res = await dealRepo.fetchDeals(page: 1);
+      if (isClosed) return;
+      _totalPages = res.totalPages;
+      deals.assignAll(res.items);
+      _page = 1;
+      _nextPage = _page + 1;
+      refreshController.refreshCompleted(resetFooterState: true);
+    } catch (e) {
+      if (isClosed) return;
+      LogService.error('refreshDeals failed', e);
+      refreshController.refreshFailed();
+    } finally {
+      _isRefresh = false;
+    }
   }
 
   Future<void> loadMore() async {
-    if (_isFetchingMore) return;
+    if (_isRefresh || _isFetchingMore || isClosed) return;
     if (!hasMore) {
       refreshController.loadNoData();
       return;
     }
     _isFetchingMore = true;
-    _page++;
+    _nextPage = _page + 1;
+    _page = _nextPage;
+    bool isFailed = false;
     try {
-      final res = await dealRepo.fetchDeals(page: _page);
+      final res = await dealRepo.fetchDeals(page: _nextPage);
+      if (isClosed || _page != _nextPage) return;
       _totalPages = res.totalPages;
       deals.addAll(res.items);
     } catch (e) {
+      if (isClosed || _nextPage != _page) return;
+      _page = _nextPage - 1;
       LogService.error('loadMore failed', e);
-      _page--;
-    }
-    _isFetchingMore = false;
-    refreshController.loadComplete();
+      isFailed = true;
+    } finally {
+        _isFetchingMore = false;
+        if(isFailed){
+          refreshController.loadFailed();
+        }
+        else{
+          refreshController.loadComplete();
+        }
+      }
   }
 
   void scrollToTop() {
